@@ -26,14 +26,6 @@ class TestDataset(Dataset):
         negative_sample = torch.LongTensor(range(self.nentity))
         return negative_sample, flatten(query), query, query_structure
     
-    @staticmethod
-    def collate_fn(data):
-        negative_sample = torch.stack([_[0] for _ in data], dim=0)
-        query = [_[1] for _ in data]
-        query_unflatten = [_[2] for _ in data]
-        query_structure = [_[3] for _ in data]
-        return negative_sample, query, query_unflatten, query_structure
-    
 class TrainDataset(Dataset):
     def __init__(self, queries, nentity, nrelation, negative_sample_size, answer):
         # queries is a list of (query, query_structure) pairs
@@ -42,7 +34,13 @@ class TrainDataset(Dataset):
         self.nentity = nentity
         self.nrelation = nrelation
         self.negative_sample_size = negative_sample_size
-        self.count = self.count_frequency(queries, answer)
+
+        start = 4
+        count = {}  
+        for query, _ in queries:
+            count[query] = start + len(answer[query])
+
+        self.count = count
         self.answer = answer
 
     def __len__(self):
@@ -53,6 +51,15 @@ class TrainDataset(Dataset):
         query_structure = self.queries[idx][1]
         tail = np.random.choice(list(self.answer[query]))
 
+        subsampling_weight = self.count[query] 
+        subsampling_weight = torch.sqrt(1 / torch.Tensor([subsampling_weight]))
+
+        negative_sample = self._random_sampling_corruption(query)
+
+        positive_sample = torch.LongTensor([tail])
+        return positive_sample, negative_sample, subsampling_weight, flatten(query), query_structure
+    
+    def _random_sampling_corruption(self, query):
         negative_sample_list = []
         negative_sample_size = 0
         while negative_sample_size < self.negative_sample_size:
@@ -66,23 +73,8 @@ class TrainDataset(Dataset):
             negative_sample = negative_sample[mask]
             negative_sample_list.append(negative_sample)
             negative_sample_size += negative_sample.size
+
         negative_sample = np.concatenate(negative_sample_list)[:self.negative_sample_size]
         negative_sample = torch.from_numpy(negative_sample)
-        positive_sample = torch.LongTensor([tail])
-        return positive_sample, negative_sample, flatten(query), query_structure
-    
-    @staticmethod
-    def collate_fn(data):
-        positive_sample = torch.cat([_[0] for _ in data], dim=0)
-        negative_sample = torch.stack([_[1] for _ in data], dim=0)
-        subsample_weight = torch.cat([_[2] for _ in data], dim=0)
-        query = [_[3] for _ in data]
-        query_structure = [_[4] for _ in data]
-        return positive_sample, negative_sample, subsample_weight, query, query_structure
-    
-    @staticmethod
-    def count_frequency(queries, answer, start=4):
-        count = {}
-        for query, qtype in queries:
-            count[query] = start + len(answer[query])
-        return count
+
+        return negative_sample
